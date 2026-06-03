@@ -10,6 +10,7 @@ export const env = {
   sessionSecret: process.env.SESSION_SECRET || 'dev-session-secret-change-me',
   apiKeyEncryptionSecret: process.env.API_KEY_ENCRYPTION_SECRET || 'dev-api-key-secret-change-me',
   defaultApiBaseUrl: process.env.API_PROXY_URL || 'https://api.jane-zz.me/v1',
+  adminEmail: String(process.env.ADMIN_EMAIL || '').trim().toLowerCase(),
   nodeEnv: process.env.NODE_ENV || 'development',
 }
 

@@ -23,6 +23,12 @@ function publicUser(user) {
   return {
     id: user.id,
     email: user.email,
+    displayName: user.displayName,
+    role: user.role,
+    status: user.status,
+    imageQuota: user.imageQuota,
+    imageUsed: user.imageUsed,
+    imageRemaining: Math.max(0, user.imageQuota - user.imageUsed),
     createdAt: user.createdAt,
   }
 }
@@ -74,6 +80,20 @@ async function requireUser(request, reply) {
     reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Please sign in first' })
     return null
   }
+  if (user.status !== 'active') {
+    reply.code(403).send({ error: 'ACCOUNT_DISABLED', message: 'Your account is disabled' })
+    return null
+  }
+  return user
+}
+
+async function requireAdmin(request, reply) {
+  const user = await requireUser(request, reply)
+  if (!user) return null
+  if (user.role !== 'admin') {
+    reply.code(403).send({ error: 'ADMIN_REQUIRED', message: 'Admin access required' })
+    return null
+  }
   return user
 }
 
@@ -116,6 +136,15 @@ function buildUpstreamUrl(baseUrl, endpointPath) {
   return `${cleanBase}/${cleanEndpoint}`
 }
 
+function getRequestedImageCount(request) {
+  const n = Number(request.body?.n)
+  return Number.isFinite(n) && n > 0 ? Math.min(10, Math.trunc(n)) : 1
+}
+
+function isImageGenerationEndpoint(endpointPath) {
+  return endpointPath === 'images/generations' || endpointPath === 'images/edits'
+}
+
 app.get('/api/health', async () => ({ status: 'ok' }))
 
 app.get('/api/auth/me', async (request) => {
@@ -139,10 +168,13 @@ app.post('/api/auth/register', async (request, reply) => {
     reply.code(409).send({ error: 'EMAIL_EXISTS', message: 'Email already exists' })
     return
   }
+  const userCount = await prisma.user.count()
+  const role = userCount === 0 || (env.adminEmail && email === env.adminEmail) ? 'admin' : 'user'
   const user = await prisma.user.create({
     data: {
       email,
       passwordHash: await hashPassword(password),
+      role,
     },
   })
   await createSession(reply, user.id)
@@ -168,6 +200,83 @@ app.post('/api/auth/logout', async (request, reply) => {
   }
   clearSessionCookie(reply)
   return { ok: true }
+})
+
+app.get('/api/account', async (request, reply) => {
+  const user = await requireUser(request, reply)
+  if (!user) return
+  const usage = await prisma.usageLog.groupBy({
+    by: ['status'],
+    where: { userId: user.id },
+    _count: { _all: true },
+  })
+  return {
+    user: publicUser(user),
+    usage: {
+      requests: usage.reduce((sum, item) => sum + item._count._all, 0),
+      byStatus: Object.fromEntries(usage.map((item) => [item.status, item._count._all])),
+    },
+  }
+})
+
+app.put('/api/account', async (request, reply) => {
+  const user = await requireUser(request, reply)
+  if (!user) return
+  const displayName = typeof request.body?.displayName === 'string'
+    ? request.body.displayName.trim().slice(0, 80)
+    : null
+  const updated = await prisma.user.update({
+    where: { id: user.id },
+    data: { displayName },
+  })
+  return { user: publicUser(updated) }
+})
+
+app.get('/api/admin/users', async (request, reply) => {
+  const admin = await requireAdmin(request, reply)
+  if (!admin) return
+  const users = await prisma.user.findMany({
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+      role: true,
+      status: true,
+      imageQuota: true,
+      imageUsed: true,
+      createdAt: true,
+      updatedAt: true,
+      _count: {
+        select: {
+          usageLogs: true,
+          apiProfiles: true,
+        },
+      },
+    },
+  })
+  return {
+    users: users.map((user) => ({
+      ...user,
+      imageRemaining: Math.max(0, user.imageQuota - user.imageUsed),
+    })),
+  }
+})
+
+app.put('/api/admin/users/:id', async (request, reply) => {
+  const admin = await requireAdmin(request, reply)
+  if (!admin) return
+  const data = {}
+  if (typeof request.body?.displayName === 'string') data.displayName = request.body.displayName.trim().slice(0, 80)
+  if (request.body?.role === 'admin' || request.body?.role === 'user') data.role = request.body.role
+  if (request.body?.status === 'active' || request.body?.status === 'disabled') data.status = request.body.status
+  if (Number.isFinite(Number(request.body?.imageQuota))) data.imageQuota = Math.max(0, Math.trunc(Number(request.body.imageQuota)))
+  if (Number.isFinite(Number(request.body?.imageUsed))) data.imageUsed = Math.max(0, Math.trunc(Number(request.body.imageUsed)))
+  const updated = await prisma.user.update({
+    where: { id: request.params.id },
+    data,
+  })
+  return { user: publicUser(updated) }
 })
 
 app.get('/api/profile', async (request, reply) => {
@@ -223,6 +332,17 @@ app.all('/api-proxy/*', async (request, reply) => {
   }
 
   const endpointPath = request.params['*']
+  const requestedImages = isImageGenerationEndpoint(endpointPath) ? getRequestedImageCount(request) : 0
+  if (requestedImages > 0 && user.imageUsed + requestedImages > user.imageQuota) {
+    reply.code(402).send({
+      error: 'IMAGE_QUOTA_EXCEEDED',
+      message: 'Image quota exceeded',
+      imageQuota: user.imageQuota,
+      imageUsed: user.imageUsed,
+      requestedImages,
+    })
+    return
+  }
   const upstreamUrl = buildUpstreamUrl(profile.baseUrl, endpointPath)
   const startedAt = Date.now()
   const headers = new Headers()
@@ -246,6 +366,23 @@ app.all('/api-proxy/*', async (request, reply) => {
       body,
     })
     status = upstreamResponse.status
+    if (upstreamResponse.ok && requestedImages > 0) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { imageUsed: { increment: requestedImages } },
+      }).catch(() => undefined)
+      await prisma.imageTask.create({
+        data: {
+          userId: user.id,
+          prompt: typeof request.body?.prompt === 'string' ? request.body.prompt : '',
+          model: typeof request.body?.model === 'string' ? request.body.model : profile.model,
+          size: typeof request.body?.size === 'string' ? request.body.size : null,
+          status: 'done',
+          imageCount: requestedImages,
+          completedAt: new Date(),
+        },
+      }).catch(() => undefined)
+    }
     await prisma.usageLog.create({
       data: {
         userId: user.id,

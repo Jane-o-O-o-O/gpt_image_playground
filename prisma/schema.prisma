@@ -11,6 +11,11 @@ model User {
   id           String       @id @default(cuid())
   email        String       @unique
   passwordHash String
+  displayName  String?
+  role         String       @default("user")
+  status       String       @default("active")
+  imageQuota   Int          @default(100)
+  imageUsed    Int          @default(0)
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   sessions     Session[]

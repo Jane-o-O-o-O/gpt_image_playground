@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "displayName" TEXT,
+ADD COLUMN     "imageQuota" INTEGER NOT NULL DEFAULT 100,
+ADD COLUMN     "imageUsed" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "role" TEXT NOT NULL DEFAULT 'user',
+ADD COLUMN     "status" TEXT NOT NULL DEFAULT 'active';

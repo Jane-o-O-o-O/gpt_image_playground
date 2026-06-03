@@ -4,6 +4,12 @@ import { DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
 export interface ServerUser {
   id: string
   email: string
+  displayName?: string | null
+  role: 'user' | 'admin'
+  status: 'active' | 'disabled'
+  imageQuota: number
+  imageUsed: number
+  imageRemaining: number
   createdAt: string
 }
 
@@ -61,6 +67,36 @@ export async function logout() {
 
 export async function getServerProfile() {
   return requestJson<{ profile: ServerProfile | null }>('/api/profile')
+}
+
+export async function getAccount() {
+  return requestJson<{ user: ServerUser; usage: { requests: number; byStatus: Record<string, number> } }>('/api/account')
+}
+
+export async function updateAccount(input: { displayName: string }) {
+  return requestJson<{ user: ServerUser }>('/api/account', {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
+}
+
+export interface AdminUser extends ServerUser {
+  updatedAt: string
+  _count: {
+    usageLogs: number
+    apiProfiles: number
+  }
+}
+
+export async function getAdminUsers() {
+  return requestJson<{ users: AdminUser[] }>('/api/admin/users')
+}
+
+export async function updateAdminUser(id: string, input: Partial<Pick<AdminUser, 'displayName' | 'role' | 'status' | 'imageQuota' | 'imageUsed'>>) {
+  return requestJson<{ user: ServerUser }>(`/api/admin/users/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
 }
 
 export async function saveServerProfile(settings: AppSettings) {
