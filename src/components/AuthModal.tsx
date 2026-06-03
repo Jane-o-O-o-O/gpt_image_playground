@@ -159,7 +159,7 @@ export default function AuthModal() {
             <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-700 dark:bg-white/[0.04] dark:text-gray-200">
               <div>Signed in as <span className="font-medium">{authUser.email}</span></div>
               <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Role: {authUser.role} · Images: {authUser.imageUsed}/{authUser.imageQuota} · Remaining: {authUser.imageRemaining}
+                Role: {authUser.role} | Images: {authUser.imageUsed}/{authUser.imageQuota} | Remaining: {authUser.imageRemaining}
               </div>
             </div>
             <div className="grid grid-cols-3 gap-1 rounded-xl bg-gray-100 p-1 text-sm dark:bg-white/[0.04]">
@@ -210,7 +210,7 @@ export default function AuthModal() {
                       </select>
                     </div>
                     <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-                      <span>Used {user.imageUsed}/{user.imageQuota} · Requests {user._count.usageLogs}</span>
+                      <span>Used {user.imageUsed}/{user.imageQuota} | Requests {user._count.usageLogs}</span>
                       <button disabled={busy} onClick={() => saveAdminUser(user)} className="rounded-md bg-gray-900 px-2 py-1 text-white disabled:opacity-60 dark:bg-white dark:text-gray-900">Save</button>
                     </div>
                   </div>
