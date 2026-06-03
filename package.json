@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:server": "node server/index.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
     "mock:api": "node scripts/mock-image-api.mjs",
     "build": "tsc -b && vite build",
     "deploy:cf": "npm run build && wrangler deploy",
@@ -14,8 +17,13 @@
   },
   "dependencies": {
     "@fal-ai/client": "^1.10.0",
+    "@fastify/cookie": "^11.0.2",
+    "@prisma/client": "^6.19.3",
     "core-js": "^3.49.0",
+    "dotenv": "^17.4.2",
+    "fastify": "^5.8.5",
     "fflate": "^0.8.2",
+    "prisma": "^6.19.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",

@@ -255,6 +255,13 @@ export default function Header() {
             </button>
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => window.dispatchEvent(new Event('gip:open-auth'))}
+              className="hidden rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-900 dark:hover:text-gray-100 sm:block"
+              title="Account"
+            >
+              Account
+            </button>
             {!isPwaInstalled && (
               <div
                 className="relative"

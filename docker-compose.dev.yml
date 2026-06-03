@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gpt-image-playground-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gpt_image
+      POSTGRES_PASSWORD: gpt_image_dev
+      POSTGRES_DB: gpt_image_playground
+    ports:
+      - "55432:5432"
+    volumes:
+      - gpt_image_playground_pg:/var/lib/postgresql/data
+
+volumes:
+  gpt_image_playground_pg:
