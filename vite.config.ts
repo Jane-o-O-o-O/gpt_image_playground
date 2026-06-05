@@ -4,6 +4,7 @@ import { readFileSync } from 'fs'
 import { normalizeDevProxyConfig } from './src/lib/devProxy'
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
+const DEV_BACKEND_TARGET = process.env.VITE_DEV_BACKEND_TARGET || 'http://127.0.0.1:8787'
 
 function loadDevProxyConfig() {
   try {
@@ -43,7 +44,7 @@ export default defineConfig(({ command }) => {
                   ),
               },
               '/api': {
-                target: devProxyConfig.target,
+                target: DEV_BACKEND_TARGET,
                 changeOrigin: true,
                 secure: false,
               },
