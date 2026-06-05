@@ -130,6 +130,21 @@ function publicProfile(profile, includeKeyStatus = true) {
   }
 }
 
+async function getLatestAdminProfile() {
+  return prisma.apiProfile.findFirst({
+    where: { user: { role: 'admin', status: 'active' } },
+    orderBy: { updatedAt: 'desc' },
+  })
+}
+
+async function getEffectiveProfileForUser(user) {
+  const ownProfile = await prisma.apiProfile.findFirst({
+    where: { userId: user.id },
+    orderBy: { updatedAt: 'desc' },
+  })
+  return ownProfile ?? getLatestAdminProfile()
+}
+
 function buildUpstreamUrl(baseUrl, endpointPath) {
   const cleanBase = String(baseUrl || env.defaultApiBaseUrl).trim().replace(/\/+$/, '')
   const cleanEndpoint = endpointPath.replace(/^\/+/, '')
@@ -143,6 +158,41 @@ function getRequestedImageCount(request) {
 
 function isImageGenerationEndpoint(endpointPath) {
   return endpointPath === 'images/generations' || endpointPath === 'images/edits'
+}
+
+function getImageMimeFromContentType(contentType) {
+  const mime = String(contentType || '').split(';')[0].trim().toLowerCase()
+  return mime.startsWith('image/') ? mime : 'image/png'
+}
+
+async function imageUrlToBase64(url, authorization) {
+  const headers = new Headers()
+  if (authorization) headers.set('Authorization', authorization)
+  const response = await fetch(url, {
+    cache: 'no-store',
+    headers,
+  })
+  if (!response.ok) {
+    throw new Error(`Image URL fetch failed: HTTP ${response.status}`)
+  }
+  const mime = getImageMimeFromContentType(response.headers.get('content-type'))
+  const buffer = Buffer.from(await response.arrayBuffer())
+  return {
+    b64_json: buffer.toString('base64'),
+    mime,
+  }
+}
+
+async function convertImageResponseUrlsToBase64(payload, authorization) {
+  if (!payload || typeof payload !== 'object' || !Array.isArray(payload.data)) return payload
+  const data = await Promise.all(payload.data.map(async (item) => {
+    if (!item || typeof item !== 'object' || typeof item.url !== 'string' || item.b64_json) return item
+    const image = await imageUrlToBase64(item.url, authorization)
+    const next = { ...item, b64_json: image.b64_json }
+    delete next.url
+    return next
+  }))
+  return { ...payload, data }
 }
 
 app.get('/api/health', async () => ({ status: 'ok' }))
@@ -282,15 +332,12 @@ app.put('/api/admin/users/:id', async (request, reply) => {
 app.get('/api/profile', async (request, reply) => {
   const user = await requireUser(request, reply)
   if (!user) return
-  const profile = await prisma.apiProfile.findFirst({
-    where: { userId: user.id },
-    orderBy: { updatedAt: 'desc' },
-  })
+  const profile = await getEffectiveProfileForUser(user)
   return { profile: profile ? publicProfile(profile) : null }
 })
 
 app.put('/api/profile', async (request, reply) => {
-  const user = await requireUser(request, reply)
+  const user = await requireAdmin(request, reply)
   if (!user) return
   const body = parseProfileBody(request.body)
   const existing = await prisma.apiProfile.findFirst({ where: { userId: user.id }, orderBy: { updatedAt: 'desc' } })
@@ -322,14 +369,7 @@ app.all('/api-proxy/*', async (request, reply) => {
   const user = await requireUser(request, reply)
   if (!user) return
 
-  const profile = await prisma.apiProfile.findFirst({
-    where: { userId: user.id },
-    orderBy: { updatedAt: 'desc' },
-  })
-  if (!profile) {
-    reply.code(400).send({ error: 'PROFILE_REQUIRED', message: 'Save API settings first' })
-    return
-  }
+  const profile = await getEffectiveProfileForUser(user)
 
   const endpointPath = request.params['*']
   const requestedImages = isImageGenerationEndpoint(endpointPath) ? getRequestedImageCount(request) : 0
@@ -343,19 +383,27 @@ app.all('/api-proxy/*', async (request, reply) => {
     })
     return
   }
-  const upstreamUrl = buildUpstreamUrl(profile.baseUrl, endpointPath)
+  const upstreamUrl = buildUpstreamUrl(profile?.baseUrl, endpointPath)
   const startedAt = Date.now()
   const headers = new Headers()
   const incomingHeaders = request.headers
+  const incomingAuthorization = typeof incomingHeaders.authorization === 'string' ? incomingHeaders.authorization : ''
+  if (!profile && !incomingAuthorization) {
+    reply.code(400).send({ error: 'PROFILE_REQUIRED', message: '请先由管理员保存服务器 API 配置' })
+    return
+  }
   for (const [key, value] of Object.entries(incomingHeaders)) {
     if (!value) continue
     const lower = key.toLowerCase()
     if (['host', 'origin', 'referer', 'cookie', 'set-cookie', 'authorization'].includes(lower)) continue
     headers.set(key, Array.isArray(value) ? value.join(',') : String(value))
   }
-  headers.set('Authorization', `Bearer ${decryptText(profile.encryptedApiKey)}`)
+  headers.set('Authorization', profile ? `Bearer ${decryptText(profile.encryptedApiKey)}` : incomingAuthorization)
 
-  const body = ['GET', 'HEAD'].includes(request.method) ? undefined : JSON.stringify(request.body ?? {})
+  const requestBody = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+    ? { ...request.body }
+    : request.body ?? {}
+  const body = ['GET', 'HEAD'].includes(request.method) ? undefined : JSON.stringify(requestBody)
   if (body && !headers.has('content-type')) headers.set('Content-Type', 'application/json')
 
   let status = 0
@@ -374,9 +422,9 @@ app.all('/api-proxy/*', async (request, reply) => {
       await prisma.imageTask.create({
         data: {
           userId: user.id,
-          prompt: typeof request.body?.prompt === 'string' ? request.body.prompt : '',
-          model: typeof request.body?.model === 'string' ? request.body.model : profile.model,
-          size: typeof request.body?.size === 'string' ? request.body.size : null,
+          prompt: typeof requestBody?.prompt === 'string' ? requestBody.prompt : '',
+          model: typeof requestBody?.model === 'string' ? requestBody.model : profile?.model ?? '',
+          size: typeof requestBody?.size === 'string' ? requestBody.size : null,
           status: 'done',
           imageCount: requestedImages,
           completedAt: new Date(),
@@ -387,23 +435,55 @@ app.all('/api-proxy/*', async (request, reply) => {
       data: {
         userId: user.id,
         endpoint: `/${endpointPath}`,
-        model: typeof request.body?.model === 'string' ? request.body.model : profile.model,
+        model: typeof requestBody?.model === 'string' ? requestBody.model : profile?.model ?? '',
         status,
         durationMs: Date.now() - startedAt,
       },
     }).catch(() => undefined)
+    const responseContentType = upstreamResponse.headers.get('content-type') || ''
+    const responseBuffer = Buffer.from(await upstreamResponse.arrayBuffer())
+    if (!upstreamResponse.ok) {
+      request.log.warn({
+        endpoint: endpointPath,
+        status: upstreamResponse.status,
+        contentType: responseContentType,
+        bodyPreview: responseBuffer.toString('utf8', 0, Math.min(responseBuffer.length, 2048)),
+      }, 'upstream returned non-ok response')
+    }
     reply.code(upstreamResponse.status)
     upstreamResponse.headers.forEach((value, key) => {
       if (['set-cookie', 'content-encoding', 'content-length'].includes(key.toLowerCase())) return
       reply.header(key, value)
     })
-    return reply.send(Buffer.from(await upstreamResponse.arrayBuffer()))
+    if (upstreamResponse.ok && isImageGenerationEndpoint(endpointPath)) {
+      try {
+        const payload = JSON.parse(responseBuffer.toString('utf8'))
+        const authorization = headers.get('Authorization') || ''
+        const convertedPayload = await convertImageResponseUrlsToBase64(payload, authorization).catch((error) => {
+          request.log.warn({
+            err: error,
+            endpoint: endpointPath,
+          }, 'failed to convert image URLs to base64; returning upstream payload')
+          return payload
+        })
+        reply.header('content-type', 'application/json; charset=utf-8')
+        return reply.send(convertedPayload)
+      } catch {
+        // Non-JSON image generation responses are forwarded as-is.
+      }
+    }
+    return reply.send(responseBuffer)
   } catch (error) {
+    request.log.error({
+      err: error,
+      endpoint: endpointPath,
+      status,
+    }, 'api proxy request failed')
     await prisma.usageLog.create({
       data: {
         userId: user.id,
         endpoint: `/${endpointPath}`,
-        model: typeof request.body?.model === 'string' ? request.body.model : profile.model,
+        model: typeof requestBody?.model === 'string' ? requestBody.model : profile?.model ?? '',
         status: status || 502,
         durationMs: Date.now() - startedAt,
       },

@@ -641,6 +641,7 @@ describe('callImageApi', () => {
 
   it('polls custom async tasks immediately and keeps polling after transient network errors', async () => {
     vi.useFakeTimers()
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
     const onCustomTaskEnqueued = vi.fn()
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ task_id: 'task-1' }), {
@@ -720,6 +721,7 @@ describe('callImageApi', () => {
 
   it('does not apply submit timeout to custom async polling after receiving a task id', async () => {
     vi.useFakeTimers()
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ task_id: 'task-1' }), {
         status: 200,

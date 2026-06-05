@@ -27,10 +27,11 @@ export interface ServerProfile {
 }
 
 async function requestJson<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const hasJsonBody = options.body !== undefined && !(options.body instanceof FormData)
   const response = await fetch(path, {
     ...options,
     headers: {
-      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+      ...(hasJsonBody ? { 'Content-Type': 'application/json' } : {}),
       ...options.headers,
     },
     credentials: 'include',

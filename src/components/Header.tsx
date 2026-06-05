@@ -8,6 +8,7 @@ import HelpModal from './HelpModal'
 import HistoryModal from './HistoryModal'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
 import { EditIcon, HelpCircleIcon, HistoryIcon, SettingsIcon } from './icons'
+import { getCurrentUser, type ServerUser } from '../lib/serverApi'
 
 export default function Header() {
   const appMode = useStore((s) => s.appMode)
@@ -27,10 +28,31 @@ export default function Header() {
   const { hasUpdate, latestRelease, dismiss } = useVersionCheck()
   const [showHelp, setShowHelp] = useState(false)
   const [hintVisible, setHintVisible] = useState(false)
+  const [canManageSettings, setCanManageSettings] = useState(false)
   const [scrollDirection, setScrollDirection] = useState<'up' | 'down'>('up')
   const [showHistoryModal, setShowHistoryModal] = useState(false)
   const historyButtonRef = useRef<HTMLButtonElement>(null)
   const createConversation = useStore((s) => s.createAgentConversation)
+
+  useEffect(() => {
+    let active = true
+    const applyUser = (user: ServerUser | null) => {
+      if (active) setCanManageSettings(user?.role === 'admin')
+    }
+    const handleAuthChanged = (event: Event) => {
+      applyUser((event as CustomEvent<{ user: ServerUser | null }>).detail?.user ?? null)
+    }
+
+    void getCurrentUser()
+      .then(({ user }) => applyUser(user))
+      .catch(() => applyUser(null))
+
+    window.addEventListener('gip:auth-changed', handleAuthChanged)
+    return () => {
+      active = false
+      window.removeEventListener('gip:auth-changed', handleAuthChanged)
+    }
+  }, [])
 
   useEffect(() => {
     if (appMode === 'agent') {
@@ -187,9 +209,9 @@ export default function Header() {
             <button
               onClick={() => window.dispatchEvent(new Event('gip:open-auth'))}
               className="hidden rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-900 dark:hover:text-gray-100 sm:block"
-              title="Account"
+              title="账号"
             >
-              Account
+              账号
             </button>
             <div
               className="relative"
@@ -209,6 +231,7 @@ export default function Header() {
                 操作指南
               </ViewportTooltip>
             </div>
+            {canManageSettings && (
             <div
               className="relative"
               {...settingsTooltip.handlers}
@@ -224,6 +247,7 @@ export default function Header() {
                 设置
               </ViewportTooltip>
             </div>
+            )}
           </div>
         </div>
         <div className={`safe-area-x sm:hidden overflow-hidden transition-all duration-300 ease-in-out ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 opacity-0 pb-0' : 'max-h-20 opacity-100 pb-2'}`}>

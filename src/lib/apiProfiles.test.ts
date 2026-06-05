@@ -32,6 +32,8 @@ describe('validateApiProfile', () => {
   })
 
   it('still requires API URL when API proxy is unavailable', () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
+
     expect(validateApiProfile(createDefaultOpenAIProfile({
       baseUrl: '',
       apiKey: 'test-key',

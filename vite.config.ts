@@ -39,7 +39,7 @@ export default defineConfig(({ command }) => {
                 rewrite: (path) =>
                   path.replace(
                     new RegExp(`^${devProxyConfig.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
-                    devProxyConfig.prefix,
+                    '',
                   ),
               },
               '/api': {
