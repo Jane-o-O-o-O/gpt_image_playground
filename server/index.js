@@ -10,6 +10,7 @@ const prisma = new PrismaClient()
 const app = Fastify({ logger: true, bodyLimit: 50 * 1024 * 1024 })
 const SESSION_COOKIE = 'gip_session'
 const SESSION_DAYS = 30
+const UPSTREAM_TIMEOUT_MS = 120 * 1000
 
 await app.register(cookie, {
   secret: env.sessionSecret,
@@ -158,6 +159,44 @@ function getRequestedImageCount(request) {
 
 function isImageGenerationEndpoint(endpointPath) {
   return endpointPath === 'images/generations' || endpointPath === 'images/edits'
+}
+
+function normalizeProxyRequestBody(requestBody, profile, endpointPath) {
+  if (!isImageGenerationEndpoint(endpointPath) || !requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) {
+    return requestBody
+  }
+
+  const next = { ...requestBody }
+  if (profile?.model && typeof next.model !== 'string') next.model = profile.model
+  if (profile?.responseFormatB64) next.response_format = 'b64_json'
+  if (!profile?.streamImages) {
+    delete next.stream
+    delete next.partial_images
+  }
+  return next
+}
+
+function shouldForwardResponseHeader(key) {
+  return ![
+    'content-encoding',
+    'content-length',
+    'set-cookie',
+    'transfer-encoding',
+  ].includes(key.toLowerCase())
+}
+
+function shouldForwardRequestHeader(key) {
+  return ![
+    'connection',
+    'content-length',
+    'host',
+    'origin',
+    'referer',
+    'cookie',
+    'set-cookie',
+    'authorization',
+    'transfer-encoding',
+  ].includes(key.toLowerCase())
 }
 
 function getImageMimeFromContentType(contentType) {
@@ -395,23 +434,27 @@ app.all('/api-proxy/*', async (request, reply) => {
   for (const [key, value] of Object.entries(incomingHeaders)) {
     if (!value) continue
     const lower = key.toLowerCase()
-    if (['host', 'origin', 'referer', 'cookie', 'set-cookie', 'authorization'].includes(lower)) continue
+    if (!shouldForwardRequestHeader(lower)) continue
     headers.set(key, Array.isArray(value) ? value.join(',') : String(value))
   }
   headers.set('Authorization', profile ? `Bearer ${decryptText(profile.encryptedApiKey)}` : incomingAuthorization)
 
-  const requestBody = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+  const rawRequestBody = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
     ? { ...request.body }
     : request.body ?? {}
+  const requestBody = normalizeProxyRequestBody(rawRequestBody, profile, endpointPath)
   const body = ['GET', 'HEAD'].includes(request.method) ? undefined : JSON.stringify(requestBody)
   if (body && !headers.has('content-type')) headers.set('Content-Type', 'application/json')
 
   let status = 0
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS)
   try {
     const upstreamResponse = await fetch(upstreamUrl, {
       method: request.method,
       headers,
       body,
+      signal: controller.signal,
     })
     status = upstreamResponse.status
     if (upstreamResponse.ok && requestedImages > 0) {
@@ -452,7 +495,7 @@ app.all('/api-proxy/*', async (request, reply) => {
     }
     reply.code(upstreamResponse.status)
     upstreamResponse.headers.forEach((value, key) => {
-      if (['set-cookie', 'content-encoding', 'content-length'].includes(key.toLowerCase())) return
+      if (!shouldForwardResponseHeader(key)) return
       reply.header(key, value)
     })
     if (upstreamResponse.ok && isImageGenerationEndpoint(endpointPath)) {
@@ -489,6 +532,8 @@ app.all('/api-proxy/*', async (request, reply) => {
       },
     }).catch(() => undefined)
     reply.code(502).send({ error: 'UPSTREAM_FAILED', message: error instanceof Error ? error.message : String(error) })
+  } finally {
+    clearTimeout(timeoutId)
   }
 })
 
