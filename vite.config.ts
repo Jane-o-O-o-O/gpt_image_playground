@@ -34,14 +34,9 @@ export default defineConfig(({ command }) => {
         devProxyConfig?.enabled
           ? {
               [devProxyConfig.prefix]: {
-                target: devProxyConfig.target,
-                changeOrigin: devProxyConfig.changeOrigin,
-                secure: devProxyConfig.secure,
-                rewrite: (path) =>
-                  path.replace(
-                    new RegExp(`^${devProxyConfig.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
-                    '',
-                  ),
+                target: DEV_BACKEND_TARGET,
+                changeOrigin: true,
+                secure: false,
               },
               '/api': {
                 target: DEV_BACKEND_TARGET,
